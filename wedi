@@ -1,0 +1,295 @@
+#!/bin/sh
+
+export POSIXLY_CORRECT=yes
+
+# Nastaveni promennych
+DIRECT=""
+FILE=""
+DATE=""
+TIME=00:00:00
+PREFIX=""
+CHANGED=0
+VI=""
+DATEUTIL="date"
+SEDUTIL="sed"
+CUROS=$(uname)
+EXITCODE=0
+
+# Nastaveni utility date/gdate podle OS
+if [ "$CUROS" = 'Linux' ]; then
+   DATEUTIL="date"
+   SEDUTIL="sed"
+elif [ "$CUROS" = 'FreeBSD' ]; then
+   DATEUTIL="gdate"
+   SEDUTIL="gsed"
+fi
+
+# Osetreni situace, ze utilita gdate neni nainstalovana
+test "$( command -v gdate )"
+if [ "$?" != "0" ]; then
+    DATEUTIL="date"
+fi   
+
+# Osetreni situace, ze utilita gsed neni nainstalovana
+test "$( command -v gsed )"
+if [ "$?" != "0" ]; then
+    SEDUTIL="sed"
+fi   
+
+# Osetreni situace, ze promenna WEDI_RC neni nastavena
+if [ -z "${WEDI_RC+x}" ]; then
+    echo "Error - variable WEDI_RC is unset" >&2
+    exit 1
+fi
+
+# Osetreni situace, ze utilita realpath neni nainstalovana
+test "$( command -v realpath )"
+if [ "$?" != "0" ]; then
+    echo "Error - realpath is not installed" >&2
+    exit 1
+fi   
+
+# Osetreni situace, ze cesta nebo soubor nastavene v promenne WEDI_RC neexistuji
+WEDIPATH=$(dirname "${WEDI_RC}")
+if [ ! -d "$WEDIPATH" ]; then
+    mkdir -p "$WEDIPATH"
+fi
+if [ ! -f "$WEDI_RC" ]; then
+    touch "$WEDI_RC"
+fi
+
+# Osetreni prav k souboru ve WEDI_RC
+if [ ! -r "$WEDI_RC" ]; then
+    echo "Error - file stored in WEDI_RC does not have read permission!" >&2
+    exit 1
+elif [ ! -w "$WEDI_RC" ]; then
+    echo "Error - file stored in WEDI_RC does not have read permission!" >&2
+    exit 1
+fi
+
+# Osetreni situace, zda editovany soubor existuje/neexistuje
+while read -r line; do
+    EFILE=$( echo "$line" | cut -d'~' -f3)
+    EDIRECT=$( echo "$line" | cut -d'~' -f6 )
+    ECHAN=$( echo "$line" | cut -d'~' -f1 )
+    
+    NEWLINE=$( echo "$line" | cut -d'~' -f -9)
+    NEWLINE_NE="$NEWLINE""~/noexist"
+    NEWLINE_E="$NEWLINE""~/exist"
+    
+    if [ ! -f "$EDIRECT/$EFILE" ]; then
+        "$SEDUTIL" -i "/$ECHAN~~$EFILE~~~/d" "$WEDI_RC"
+        echo "$NEWLINE_NE" >> "$WEDI_RC"
+    else
+        "$SEDUTIL" -i "/$ECHAN~~$EFILE~~~/d" "$WEDI_RC"
+        echo "$NEWLINE_E" >> "$WEDI_RC"
+    fi       
+done < "$WEDI_RC"
+
+# Nastaveni pouzivaneho editoru vcetne osetreni situace, ze neni nainstalovany
+if [ -z "${EDITOR+x}" ]; then
+    if [ -z "${VISUAL+x}" ]; then
+        VI="vi"
+    else
+        test "$( command -v "$VISUAL" )"
+        if [ "$?" != 0 ]; then
+            echo "Error - editor set in VISUAL is not installed"
+            exit 1
+        fi
+        VI="$VISUAL"
+    fi
+else
+    test "$( command -v "$EDITOR" )"
+    if [ "$?" != "0" ]; then
+        echo "Error - editor set in EDITOR is not installed"                         
+        exit 1
+    fi
+    VI="$EDITOR"
+fi
+        
+# Nastaveni promennych podle zadanych argumentu
+# Osetreni vstupu pomoci argumentu
+if [ "$#" -eq "0" ]; then       # Situace pro 0 argumentu
+    DIRECT=$( realpath "$PWD" )
+
+elif [ "$#" -eq "1" ]; then       # Situace pro 1 argument
+    ARG1=$1
+      
+    if [ -d "$ARG1" ]; then
+        DIRECT=$(realpath "$ARG1")
+    
+    elif { [ "$ARG1" = "-m" ] || [ "$ARG1" = "-l" ] ;} then
+        PREFIX=$ARG1
+    
+    elif [ -n "$ARG1" ]; then
+        if [ "$CUROS" = "FreeBSD" ]; then
+            if [ "$( dirname "$ARG1" )" = "" ]; then
+                DIRECT=$( realpath "$PWD" )
+                FILE="$ARG1"
+            else
+                DIRECT="$( realpath $( dirname "$ARG1" ) )"
+                FILE="$( basename "$ARG1" )"
+            fi
+        fi
+        DIRECT=$( realpath "$ARG1")
+        DIRECT=$(dirname "${DIRECT}")
+        FILE=$(basename "${1}")
+        
+    else
+        echo "Error - wrong use of arguments" >&2
+        exit 1
+    fi
+
+elif [ "$#" -eq "2" ]; then       # Situace pro 2 argumenty
+    ARG1=$1
+    ARG2=$2
+    ARGDATE=$( echo "$ARG2" | grep '^[[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]$' )
+    
+    if { [ "$ARG1" = "-m" ] || [ "$ARG1" = "-l" ]; } && [ -d "$ARG2" ]; then
+        DIRECT=$(realpath "$ARG2")
+        PREFIX=$ARG1
+    
+    # Osetreni spravneho formatu vstupniho data a prepinacu
+    elif { [ "$ARG1" = "-a" ] || [ "$ARG1" = "-b" ]; } && [ -n "$ARGDATE" ]; then
+        DATE=$ARG2
+        PREFIX=$ARG1  
+    
+    else
+        echo "Error - wrong use of arguments" >&2
+        exit 1
+    fi
+
+elif [ "$#" -eq "3" ]; then       # Situace pro 3 argumenty
+    ARG1=$1
+    ARG2=$2
+    ARG3=$3
+    ARGDATE=$( echo "$ARG2" | grep '^[[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]$' )
+    
+    # Osetreni spravneho formatu vstupniho data a prepinacu
+    if { [ "$ARG1" = "-a" ] || [ "$ARG1" = "-b" ]; } && [ -n "$ARGDATE" ] && [ -d "$ARG3" ]; then
+        DATE=$ARG2
+        PREFIX=$ARG1
+        DIRECT=$(realpath "$ARG3")
+    
+    else
+        echo "Error - wrong use of arguments" >&2
+        exit 1
+    fi
+    
+else
+    echo "Error - wrong use of arguments" >&2
+    exit 1
+fi
+
+# Editovani zadaneho souboru
+if [ "$FILE" != "" ]; then
+    $VI "$DIRECT/$FILE"
+    EXITCODE="$?"
+    CHANGED=$( grep "~$FILE~~~$DIRECT~" "$WEDI_RC" | sort | tail -1 | cut -d'~' -f1 )
+    CHANGED=$((CHANGED + 1))
+    echo "$CHANGED~~$FILE~~~$DIRECT~~$($DATEUTIL '+%Y-%m-%d~%H:%M:%S')~/exist" >> "$WEDI_RC"
+    exit "$EXITCODE"
+
+# Vypis editovanych souboru v dane slozce
+elif [ "$PREFIX" = "-l" ]; then
+    if [ "$DIRECT" != "" ]; then
+        grep "~/exist" "$WEDI_RC" | grep "~$DIRECT~" | cut -d'~' -f3 | sort | uniq
+    else
+        DIRECT=$( realpath "$PWD" )
+        grep "~/exist" "$WEDI_RC" | grep "~$DIRECT~" | cut -d'~' -f3 | sort | uniq
+    fi
+    exit 0
+
+# Vypis editovanych souboru v dane slozce po/pred zadanym datem       
+elif { [ "$PREFIX" = "-a" ] || [ "$PREFIX" = "-b" ];} then
+    PRINT=""
+    while read -r line; do
+        if [ "$( echo "$line" | cut -d'~' -f10 )" = "/exist" ]; then
+            LDATE=$( echo "$line" | cut -d'~' -f8 )
+            
+            if [ "$DIRECT" = "" ]; then
+                DIRECT=$( realpath "$PWD" )
+            fi
+             
+            DATE=$( echo "$DATE" | tr -d "-")
+            LDATE=$( echo "$LDATE" | tr -d "-")  
+            
+            LDIR=$( echo "$line" | cut -d'~' -f6 )
+            NAME=$( echo "$line" | cut -d'~' -f3 )
+            
+            if [ "$PREFIX" = "-a" ]; then
+                if [ "$LDIR" = "$DIRECT" ]; then
+                    if [ "$DATE" -le "$LDATE" ]; then
+                        PRINT="${PRINT}\n${NAME}"
+                    fi 
+                fi
+            else
+                if [ "$LDIR" = "$DIRECT" ]; then
+                    if [ "$DATE" -gt "$LDATE" ]; then
+                        PRINT="${PRINT}\n${NAME}"
+                    fi 
+                fi
+            fi 
+        fi
+        
+    done <"$WEDI_RC"
+   
+    if [ "$PRINT" != "" ]; then
+        printf "$PRINT" | tail -n +2 | sort | uniq
+    else
+        echo "No such file"
+    fi
+    exit 0
+
+# Editovani souboru, ktery byl v dane slozce nejvicekrat editovan
+elif [ "$PREFIX" = "-m" ]; then
+    if [ "$DIRECT" = "" ]; then
+        DIRECT=$( realpath "$PWD" )
+    fi    
+    
+    LCHAN=$( grep "~/exist" "$WEDI_RC" | grep "~$DIRECT~" | cut -d'~' -f1 | sort -g | tail -1 )
+    FILE=$( grep "~/exist" "$WEDI_RC" | grep "~$DIRECT~" | grep "$LCHAN~~" | head -1 | cut -d'~' -f3 )
+
+    if [ ! -f "$DIRECT/$FILE" ]; then
+        echo "Error - there is not a file edited by wedi in this directory" >&2
+        exit 1
+    
+    else
+        $VI "$DIRECT/$FILE"
+        EXITCODE="$?"
+        CHANGED=$( grep "~$FILE~~~$DIRECT~" "$WEDI_RC" | sort | tail -1 | cut -d'~' -f1 )
+        CHANGED=$((CHANGED + 1))
+        echo "$CHANGED~~$FILE~~~$DIRECT~~$($DATEUTIL '+%Y-%m-%d~%H:%M:%S')~/exist" >> "$WEDI_RC"
+     fi
+     exit "$EXITCODE"
+
+# Editovani souboru, ktery byl v dane slozce editovan jako posledni    
+else
+    if [ "$DIRECT" = "" ]; then
+        DIRECT=$( realpath "$PWD" )
+    fi    
+    
+    DATE=$( grep "~/exist" "$WEDI_RC" | grep "~$DIRECT~" | cut -d'~' -f8,9 | sort | tail -1)
+    FILE=$( grep "~/exist" "$WEDI_RC" | grep "~$DIRECT~" | grep "~$DATE" | head -1 | cut -d'~' -f3 )
+
+    if [ ! -f "$DIRECT/$FILE" ]; then
+        echo "Error - there is not a file edited by wedi in this directory" >&2
+        exit 1
+    
+    else
+        $VI "$DIRECT/$FILE"
+        EXITCODE="$?"
+        CHANGED=$( grep "~$FILE~~~$DIRECT~" "$WEDI_RC" | sort | tail -1 | cut -d'~' -f1 )
+        CHANGED=$((CHANGED + 1))
+        echo "$CHANGED~~$FILE~~~$DIRECT~~$($DATEUTIL '+%Y-%m-%d~%H:%M:%S')~/exist" >> "$WEDI_RC"
+        exit "$EXITCODE"
+    fi
+fi
+
+
+
+
+
+
+
+
